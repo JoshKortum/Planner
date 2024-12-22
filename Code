@@ -1,0 +1,670 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from tkcalendar import DateEntry
+from datetime import datetime
+import json
+import os
+import re  # For input validation
+from PIL import Image, ImageTk  # For handling images
+import smtplib  # For sending emails
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+class PlannerApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("🎄 24-Hour Planner App 🎅")
+        self.root.geometry("600x800")
+        self.root.resizable(False, False)
+
+        # Email Configuration
+        self.SENDER_EMAIL = "24hourplanner@gmail.com"  # Replace with your sender email
+        self.SENDER_PASSWORD = "ogvkblesxwoweczf"  # Replace with your App Password
+
+        # Apply a custom Christmas theme
+        style = ttk.Style(self.root)
+        self.create_custom_theme(style)
+        style.theme_use("custom")
+
+        self.appointments = {}  # Dictionary to store appointments
+        self.load_appointments()  # Load appointments from file
+
+        # Add top Christmas image
+        self.add_top_image()
+
+        # Frame for date selection
+        date_frame = ttk.Frame(root, style='Custom.TFrame')
+        date_frame.pack(pady=10)
+        ttk.Label(date_frame, text="Select Date:", style='TLabel').pack(side='left', padx=5)
+        self.date_var = tk.StringVar()
+        self.date_entry = DateEntry(
+            date_frame,
+            textvariable=self.date_var,
+            date_pattern='yyyy-mm-dd',
+            mindate=datetime.today().date(),
+            background='#006400',  # Dark Green
+            foreground='white',
+            borderwidth=2,
+            font=('Comic Sans MS', 10),
+            style='Custom.TEntry'  # Apply Custom Style
+        )
+        self.date_entry.pack(side='left', padx=5)
+        self.date_entry.bind("<<DateEntrySelected>>", self.on_date_change)
+
+        # Frame for input fields
+        input_frame = ttk.LabelFrame(root, text="📅 Schedule an Appointment", style='Custom.TLabelframe')
+        input_frame.pack(pady=10, padx=20, fill='x')
+
+        # Time entry using Combobox
+        time_frame = ttk.Frame(input_frame, style='Custom.TFrame')
+        time_frame.pack(pady=5, padx=10, fill='x')
+        ttk.Label(time_frame, text="🕒 Time:", style='TLabel').pack(side='left', padx=5)
+        # Time slots for Combobox (00:00 to 23:30 in 30-minute intervals)
+        self.all_time_options = [f"{h:02d}:{m:02d}" for h in range(0, 24) for m in (0, 30)]
+        self.time_var = tk.StringVar()
+        self.time_combobox = ttk.Combobox(
+            time_frame,
+            textvariable=self.time_var,
+            values=[],  # We'll set values dynamically
+            state='readonly',
+            width=10,
+            font=('Comic Sans MS', 10),
+            style='Custom.TCombobox'  # Ensure consistent styling
+        )
+        self.time_combobox.pack(side='left', padx=5)
+        self.time_combobox.set('Select Time')
+
+        # Buttons for adding, editing, and deleting appointments
+        button_frame = ttk.Frame(root)
+        button_frame.pack(pady=10)
+        self.add_button = ttk.Button(button_frame, text="➕ Add Appointment", command=self.open_details_page)
+        self.add_button.pack(side='left', padx=5)
+        self.edit_button = ttk.Button(button_frame, text="✏️ Edit Appointment", command=self.edit_appointment)
+        self.edit_button.pack(side='left', padx=5)
+        self.delete_button = ttk.Button(button_frame, text="🗑️ Delete Appointment", command=self.delete_appointment)
+        self.delete_button.pack(side='left', padx=5)
+
+        # Listbox to display appointments
+        listbox_frame = ttk.LabelFrame(root, text="🗒️ Appointments", style='Custom.TLabelframe')
+        listbox_frame.pack(pady=10, padx=20, fill='both', expand=True)
+        self.appointment_listbox = tk.Listbox(
+            listbox_frame,
+            bg='#FFFAF0',
+            fg='#006400',
+            font=('Comic Sans MS', 12, 'bold'),
+            selectbackground='#B22222',
+            selectforeground='white'
+        )
+        self.appointment_listbox.pack(fill='both', expand=True, padx=5, pady=5)
+        self.appointment_listbox.bind('<<ListboxSelect>>', self.on_appointment_select)
+
+        # Scrollbar for the listbox
+        scrollbar = ttk.Scrollbar(listbox_frame, orient='vertical', command=self.appointment_listbox.yview)
+        self.appointment_listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side='right', fill='y')
+
+        # Add snowflake decorations
+        self.add_snowflakes()
+
+        # Show appointments for the current date
+        self.on_date_change()
+
+        # Variables to keep track of selected appointment
+        self.selected_date = None
+        self.selected_time = None
+
+    def add_top_image(self):
+        # Add a top Christmas image (e.g., a Christmas tree)
+        try:
+            img = Image.open('christmas_tree.png')  # Ensure this image exists
+            img = img.resize((550, 150), Image.ANTIALIAS)
+            self.top_image = ImageTk.PhotoImage(img)
+            label = ttk.Label(self.root, image=self.top_image)
+            label.pack(pady=10)
+        except Exception as e:
+            print("Top image not found or cannot be opened:", e)
+
+    def add_snowflakes(self):
+        # Add snowflake decorations to the background
+        try:
+            snowflake_img = Image.open('snowflake.png')  # Ensure this image exists
+            snowflake_img = snowflake_img.resize((30, 30), Image.ANTIALIAS)
+            self.snowflake = ImageTk.PhotoImage(snowflake_img)
+
+            # Create multiple snowflakes at varied positions
+            positions = [
+                (50, 200), (150, 250), (250, 300), (350, 350), (450, 400),
+                (550, 450), (100, 500), (200, 550), (300, 600), (400, 650),
+                (500, 700), (600, 750), (700, 800), (800, 850), (900, 900),
+                (1000, 950), (1100, 1000), (1200, 1050), (1300, 1100), (1400, 1150)
+            ]
+
+            for pos in positions:
+                x, y = pos
+                label = tk.Label(self.root, image=self.snowflake, bg='#006400')
+                label.place(x=x, y=y)
+        except Exception as e:
+            print("Snowflake image not found or cannot be opened:", e)
+
+    def create_custom_theme(self, style):
+        # Define Christmas-themed colors and styles
+        style.theme_create("custom", parent="alt", settings={
+            ".": {
+                "configure": {
+                    "background": "#006400",  # Dark Green Background
+                    "foreground": "white",
+                    "font": ('Comic Sans MS', 10)
+                }
+            },
+            "Custom.TFrame": {
+                "configure": {
+                    "background": "#006400",  # Dark Green
+                }
+            },
+            "Custom.TLabelframe": {
+                "configure": {
+                    "background": "#006400",
+                    "foreground": "white",
+                    "relief": "solid",
+                    "borderwidth": 2
+                }
+            },
+            "TLabelframe.Label": {
+                "configure": {
+                    "background": "#006400",
+                    "foreground": "white",
+                    "font": ('Comic Sans MS', 12, 'bold')
+                }
+            },
+            "TLabel": {
+                "configure": {
+                    "background": "#006400",
+                    "foreground": "white",
+                    "font": ('Comic Sans MS', 10, 'bold')
+                }
+            },
+            "TButton": {
+                "configure": {
+                    "background": "#B22222",  # Firebrick Red
+                    "foreground": "white",
+                    "relief": "raised",
+                    "font": ('Comic Sans MS', 10, 'bold')
+                },
+                "map": {
+                    "background": [("active", "#8B0000")],  # Dark Red on hover
+                    "foreground": [("active", "white")]
+                }
+            },
+            "TCombobox": {
+                "configure": {
+                    "fieldbackground": "white",
+                    "background": "#B22222",
+                    "foreground": "white",
+                    "font": ('Comic Sans MS', 10)
+                },
+                "map": {
+                    "background": [("readonly", "#B22222")],
+                    "foreground": [("readonly", "white")]
+                }
+            },
+            "Custom.TEntry": {  # New Style for Entry Widgets
+                "configure": {
+                    "foreground": "#006400",  # Dark Green Text
+                    "background": "white",
+                    "fieldbackground": "white",
+                    "font": ('Comic Sans MS', 10)
+                }
+            }
+        })
+        # Optionally, set overall background color
+        self.root.configure(bg='#006400')  # Dark Green
+
+    def send_email(self, recipient_email, subject, body):
+        """
+        Sends an email to the specified recipient.
+        """
+        try:
+            # Set up the MIME
+            message = MIMEMultipart()
+            message['From'] = self.SENDER_EMAIL
+            message['To'] = recipient_email
+            message['Subject'] = subject
+
+            # Attach the body with the msg instance
+            message.attach(MIMEText(body, 'plain'))
+
+            # Create SMTP session for sending the mail
+            session = smtplib.SMTP('smtp.gmail.com', 587)  # Use Gmail's SMTP server
+            session.starttls()  # Enable security
+            session.login(self.SENDER_EMAIL, self.SENDER_PASSWORD)  # Login with mail_id and password
+            text = message.as_string()
+            session.sendmail(self.SENDER_EMAIL, recipient_email, text)
+            session.quit()
+            print(f"Email sent to {recipient_email}")
+            return True
+        except Exception as e:
+            print(f"Failed to send email to {recipient_email}: {e}")
+            return False
+
+    def open_details_page(self):
+        date = self.date_entry.get_date()
+        date_str = date.strftime('%Y-%m-%d')
+        time = self.time_var.get()
+
+        # Past Date Validation
+        if date < datetime.today().date():
+            messagebox.showerror("❌ Invalid Date", "Cannot schedule appointments on past dates.")
+            return
+
+        if not time or time == 'No Available Times':
+            messagebox.showerror("❌ No Time Selected", "Please select a valid time for the appointment.")
+            return
+
+        # Check if time slot is available
+        if date_str in self.appointments and any(appt['time'] == time for appt in self.appointments[date_str]):
+            messagebox.showerror("❌ Time Slot Unavailable", "This time slot is already booked.")
+            return
+
+        # Open new window for additional details
+        self.details_window = tk.Toplevel(self.root)
+        self.details_window.title("✏️ Enter Appointment Details")
+        self.details_window.geometry("450x500")
+        self.details_window.resizable(False, False)
+        self.details_window.configure(bg='#228B22')  # Forest Green
+
+        # Add a snowflake decoration
+        try:
+            snowflake_img = Image.open('snowflake.png')
+            snowflake_img = snowflake_img.resize((50, 50), Image.ANTIALIAS)
+            self.details_snowflake = ImageTk.PhotoImage(snowflake_img)
+            label = tk.Label(self.details_window, image=self.details_snowflake, bg='#228B22')
+            label.pack(pady=10)
+        except Exception as e:
+            print("Snowflake image not found or cannot be opened:", e)
+
+        # Name
+        ttk.Label(self.details_window, text="👤 Name:", style='TLabel').pack(pady=5)
+        self.name_var = tk.StringVar()
+        self.name_entry = ttk.Entry(
+            self.details_window,
+            textvariable=self.name_var,
+            width=40,
+            font=('Comic Sans MS', 10),
+            style='Custom.TEntry'  # Apply Custom Style
+        )
+        self.name_entry.pack(pady=5)
+
+        # Email
+        ttk.Label(self.details_window, text="📧 Email:", style='TLabel').pack(pady=5)
+        self.email_var = tk.StringVar()
+        self.email_entry = ttk.Entry(
+            self.details_window,
+            textvariable=self.email_var,
+            width=40,
+            font=('Comic Sans MS', 10),
+            style='Custom.TEntry'  # Apply Custom Style
+        )
+        self.email_entry.pack(pady=5)
+
+        # Phone Number
+        ttk.Label(self.details_window, text="📱 Phone Number:", style='TLabel').pack(pady=5)
+        self.phone_var = tk.StringVar()
+        self.phone_entry = ttk.Entry(
+            self.details_window,
+            textvariable=self.phone_var,
+            width=40,
+            font=('Comic Sans MS', 10),
+            style='Custom.TEntry'  # Apply Custom Style
+        )
+        self.phone_entry.pack(pady=5)
+
+        # Purpose of Appointment
+        ttk.Label(self.details_window, text="🎯 Purpose of Appointment:", style='TLabel').pack(pady=5)
+        self.purpose_var = tk.StringVar()
+        self.purpose_entry = ttk.Entry(
+            self.details_window,
+            textvariable=self.purpose_var,
+            width=40,
+            font=('Comic Sans MS', 10),
+            style='Custom.TEntry'  # Apply Custom Style
+        )
+        self.purpose_entry.pack(pady=5)
+
+        # Submit Button
+        ttk.Button(self.details_window, text="✅ Submit", command=self.add_appointment).pack(pady=20)
+
+    def add_appointment(self):
+        date = self.date_entry.get_date()
+        date_str = date.strftime('%Y-%m-%d')
+        time = self.time_var.get()
+
+        name = self.name_var.get().strip()
+        email = self.email_var.get().strip()
+        phone = self.phone_var.get().strip()
+        purpose = self.purpose_var.get().strip()
+
+        # Input validation
+        if not name:
+            messagebox.showerror("❌ Input Error", "Name is required.")
+            return
+
+        if not email or not re.match(r'^\S+@\S+\.\S+$', email):
+            messagebox.showerror("❌ Input Error", "A valid email is required.")
+            return
+
+        if not phone or not re.match(r'^\+?\d{10,15}$', phone):
+            messagebox.showerror("❌ Input Error", "A valid phone number is required.")
+            return
+
+        if not purpose:
+            messagebox.showerror("❌ Input Error", "Please specify the purpose of the appointment.")
+            return
+
+        # All validations passed, add the appointment
+        appointment_info = {
+            'time': time,
+            'name': name,
+            'email': email,
+            'phone': phone,
+            'purpose': purpose
+        }
+
+        self.appointments.setdefault(date_str, []).append(appointment_info)
+        messagebox.showinfo("✅ Appointment Added", f"🎉 Appointment on {date_str} at {time} added successfully.")
+
+        # Save appointments to file
+        self.save_appointments()
+
+        # Send confirmation email
+        subject = "📧 Appointment Confirmation"
+        body = f"""Hello {name},
+
+Your appointment has been scheduled successfully.
+
+📅 Date: {date_str}
+🕒 Time: {time}
+
+📋 Purpose: {purpose}
+
+If you have any questions, feel free to contact us.
+
+Thank you!
+
+🎄 24-Hour Planner App 🎅
+"""
+        email_sent = self.send_email(email, subject, body)
+        if email_sent:
+            messagebox.showinfo("✅ Email Sent", f"A confirmation email has been sent to {email}.")
+        else:
+            messagebox.showerror("❌ Email Failed", "Failed to send confirmation email. Please check the email address and your internet connection.")
+
+        # Close the details window
+        self.details_window.destroy()
+
+        # Clear the time selection
+        self.time_var.set('Select Time')
+        # Refresh the appointment list and update time options
+        self.show_appointments()
+        self.update_time_options()
+
+    def edit_appointment(self):
+        if self.selected_date and self.selected_time:
+            # Fetch the appointment details
+            appointment = next((appt for appt in self.appointments[self.selected_date] if appt['time'] == self.selected_time), None)
+            if appointment:
+                # Open edit window
+                self.edit_window = tk.Toplevel(self.root)
+                self.edit_window.title("✏️ Edit Appointment")
+                self.edit_window.geometry("450x500")
+                self.edit_window.resizable(False, False)
+                self.edit_window.configure(bg='#228B22')  # Forest Green
+
+                # Add a snowflake decoration
+                try:
+                    snowflake_img = Image.open('snowflake.png')
+                    snowflake_img = snowflake_img.resize((50, 50), Image.ANTIALIAS)
+                    self.edit_snowflake = ImageTk.PhotoImage(snowflake_img)
+                    label = tk.Label(self.edit_window, image=self.edit_snowflake, bg='#228B22')
+                    label.pack(pady=10)
+                except Exception as e:
+                    print("Snowflake image not found or cannot be opened:", e)
+
+                # Name
+                ttk.Label(self.edit_window, text="👤 Name:", style='TLabel').pack(pady=5)
+                self.edit_name_var = tk.StringVar(value=appointment['name'])
+                self.edit_name_entry = ttk.Entry(
+                    self.edit_window,
+                    textvariable=self.edit_name_var,
+                    width=40,
+                    font=('Comic Sans MS', 10),
+                    style='Custom.TEntry'  # Apply Custom Style
+                )
+                self.edit_name_entry.pack(pady=5)
+
+                # Email
+                ttk.Label(self.edit_window, text="📧 Email:", style='TLabel').pack(pady=5)
+                self.edit_email_var = tk.StringVar(value=appointment['email'])
+                self.edit_email_entry = ttk.Entry(
+                    self.edit_window,
+                    textvariable=self.edit_email_var,
+                    width=40,
+                    font=('Comic Sans MS', 10),
+                    style='Custom.TEntry'  # Apply Custom Style
+                )
+                self.edit_email_entry.pack(pady=5)
+
+                # Phone Number
+                ttk.Label(self.edit_window, text="📱 Phone Number:", style='TLabel').pack(pady=5)
+                self.edit_phone_var = tk.StringVar(value=appointment['phone'])
+                self.edit_phone_entry = ttk.Entry(
+                    self.edit_window,
+                    textvariable=self.edit_phone_var,
+                    width=40,
+                    font=('Comic Sans MS', 10),
+                    style='Custom.TEntry'  # Apply Custom Style
+                )
+                self.edit_phone_entry.pack(pady=5)
+
+                # Purpose of Appointment
+                ttk.Label(self.edit_window, text="🎯 Purpose of Appointment:", style='TLabel').pack(pady=5)
+                self.edit_purpose_var = tk.StringVar(value=appointment['purpose'])
+                self.edit_purpose_entry = ttk.Entry(
+                    self.edit_window,
+                    textvariable=self.edit_purpose_var,
+                    width=40,
+                    font=('Comic Sans MS', 10),
+                    style='Custom.TEntry'  # Apply Custom Style
+                )
+                self.edit_purpose_entry.pack(pady=5)
+
+                # Save Button
+                ttk.Button(
+                    self.edit_window,
+                    text="💾 Save Changes",
+                    command=lambda: self.save_edited_appointment(appointment)
+                ).pack(pady=20)
+            else:
+                messagebox.showerror("❌ Error", "Selected appointment not found.")
+        else:
+            messagebox.showwarning("⚠️ No Selection", "Please select an appointment to edit.")
+
+    def save_edited_appointment(self, original_appointment):
+        name = self.edit_name_var.get().strip()
+        email = self.edit_email_var.get().strip()
+        phone = self.edit_phone_var.get().strip()
+        purpose = self.edit_purpose_var.get().strip()
+
+        # Input validation
+        if not name:
+            messagebox.showerror("❌ Input Error", "Name is required.")
+            return
+
+        if not email or not re.match(r'^\S+@\S+\.\S+$', email):
+            messagebox.showerror("❌ Input Error", "A valid email is required.")
+            return
+
+        if not phone or not re.match(r'^\+?\d{10,15}$', phone):
+            messagebox.showerror("❌ Input Error", "A valid phone number is required.")
+            return
+
+        if not purpose:
+            messagebox.showerror("❌ Input Error", "Please specify the purpose of the appointment.")
+            return
+
+        # Update the appointment details
+        original_appointment['name'] = name
+        original_appointment['email'] = email
+        original_appointment['phone'] = phone
+        original_appointment['purpose'] = purpose
+
+        messagebox.showinfo("✅ Appointment Updated", f"🎉 Appointment on {self.selected_date} at {self.selected_time} updated successfully.")
+
+        # Save appointments to file
+        self.save_appointments()
+
+        # Send update email
+        subject = "📧 Appointment Updated"
+        body = f"""Hello {name},
+
+Your appointment has been updated successfully.
+
+📅 Date: {self.selected_date}
+🕒 Time: {self.selected_time}
+
+📋 Purpose: {purpose}
+
+If you have any questions, feel free to contact us.
+
+Thank you!
+
+🎄 24-Hour Planner App 🎅
+"""
+        email_sent = self.send_email(email, subject, body)
+        if email_sent:
+            messagebox.showinfo("✅ Email Sent", f"An update confirmation email has been sent to {email}.")
+        else:
+            messagebox.showerror("❌ Email Failed", "Failed to send update confirmation email. Please check the email address and your internet connection.")
+
+        # Close the edit window
+        self.edit_window.destroy()
+
+        # Refresh the appointment list
+        self.show_appointments()
+
+    def delete_appointment(self):
+        if self.selected_date and self.selected_time:
+            date = self.selected_date
+            time = self.selected_time
+
+            # Past Date Validation
+            date_obj = datetime.strptime(date, '%Y-%m-%d').date()
+            if date_obj < datetime.today().date():
+                messagebox.showerror("❌ Invalid Date", "Cannot delete appointments on past dates.")
+                return
+
+            # Confirm deletion
+            confirm = messagebox.askyesno("🗑️ Delete Appointment", f"Are you sure you want to delete the appointment on {date} at {time}?")
+            if confirm:
+                # Remove the appointment
+                self.appointments[date] = [appt for appt in self.appointments[date] if appt['time'] != time]
+                if not self.appointments[date]:
+                    del self.appointments[date]
+
+                messagebox.showinfo("✅ Appointment Deleted", f"🗑️ Appointment on {date} at {time} deleted successfully.")
+
+                # Save appointments to file
+                self.save_appointments()
+
+                # Optionally, send a cancellation email to the user
+                # Fetch the deleted appointment's email if needed before deletion
+                # For simplicity, this example does not send a cancellation email
+
+                # Clear selection and input fields
+                self.appointment_listbox.selection_clear(0, tk.END)
+                self.selected_date = None
+                self.selected_time = None
+
+                # Refresh the appointment list and update time options
+                self.show_appointments()
+                self.update_time_options()
+        else:
+            messagebox.showwarning("⚠️ No Selection", "Please select an appointment to delete.")
+
+    def show_appointments(self, event=None):
+        date = self.date_entry.get_date().strftime('%Y-%m-%d')
+        self.appointment_listbox.delete(0, tk.END)
+
+        # Generate time slots between 00:00 and 23:30
+        time_slots = self.all_time_options
+
+        # Display time slots and their booking status
+        for slot in time_slots:
+            status = '✅ Available'
+            if date in self.appointments:
+                for appt in self.appointments[date]:
+                    if appt['time'] == slot:
+                        status = f"🔴 Booked - {appt['name']} - {appt['purpose']}"
+                        break
+            self.appointment_listbox.insert(tk.END, f"{slot} - {status}")
+
+    def on_appointment_select(self, event):
+        selection = event.widget.curselection()
+        if selection:
+            index = selection[0]
+            selected_text = event.widget.get(index)
+            date = self.date_entry.get_date().strftime('%Y-%m-%d')
+            time_status = selected_text.split(' - ', 1)
+            if len(time_status) >= 2 and '🔴 Booked' in time_status[1]:
+                time = time_status[0]
+                # Set the selected appointment details
+                self.selected_date = date
+                self.selected_time = time
+            else:
+                # Clear selection if the slot is not booked
+                self.selected_date = None
+                self.selected_time = None
+                self.appointment_listbox.selection_clear(0, tk.END)
+        else:
+            self.selected_date = None
+            self.selected_time = None
+
+    def on_date_change(self, event=None):
+        self.show_appointments()
+        self.update_time_options()
+        # Clear the selected appointment and input fields when date changes
+        self.selected_date = None
+        self.selected_time = None
+        self.time_var.set('Select Time')
+
+    def update_time_options(self):
+        date = self.date_entry.get_date().strftime('%Y-%m-%d')
+        booked_times = set()
+        if date in self.appointments:
+            booked_times = {appt['time'] for appt in self.appointments[date]}
+
+        available_times = [time for time in self.all_time_options if time not in booked_times]
+
+        self.time_combobox['values'] = available_times
+        if available_times:
+            self.time_combobox.set(available_times[0])
+        else:
+            self.time_combobox.set('No Available Times')
+
+    def save_appointments(self):
+        with open('appointments.json', 'w') as f:
+            json.dump(self.appointments, f, indent=4)
+
+    def load_appointments(self):
+        if os.path.exists('appointments.json'):
+            with open('appointments.json', 'r') as f:
+                self.appointments = json.load(f)
+        else:
+            self.appointments = {}
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = PlannerApp(root)
+    root.mainloop()
+
+
+
